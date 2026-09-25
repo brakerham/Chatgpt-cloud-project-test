@@ -70,6 +70,7 @@ pytest
 ```
 
 Unit tests do not call the OpenAI API. The Agent Loop test uses a fake client.
+GitHub Actions also runs `pytest -q` on pushes to `main` and on pull requests.
 
 ## Safety limits
 
