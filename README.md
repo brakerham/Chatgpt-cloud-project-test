@@ -2,31 +2,46 @@
 
 A deliberately small Coding Agent for learning the core agent loop step by step.
 
-Current version: **v0.2**
+Current version: **v0.3**
 
-## How it works
+## Architecture
 
 ```text
 User Task
-  -> CodingAgent
-  -> LLM
-  -> Tool Call
-  -> Tool Execution
-  -> Tool Result
-  -> LLM
-  -> ...
-  -> Final Answer
+   ↓
+CodingAgent
+   ↓
+AgentState
+   ↕
+ContextManager
+   ↓
+LLM
+   ↓
+Tool Call
+   ↓
+CodingTools
+   ↓
+Tool Result
+   ↓
+ContextManager
+   ↓
+LLM
+   ↓
+...
+   ↓
+Final Answer
 ```
 
-The model currently has four tools:
+Responsibilities are intentionally separated:
 
-- `list_files`
-- `read_file`
-- `write_file`
-- `run_command`
+- `AgentConfig`: model and API connection configuration.
+- `AgentState`: mutable state for one agent run: original task, history, current step, metadata.
+- `ContextManager`: creates state, rebuilds model input, and records model/tool outputs.
+- `CodingAgent`: decides when to call the model and tools; it no longer owns the raw history list.
+- `Workspace`: filesystem boundary.
+- `CodingTools`: `list_files`, `read_file`, `write_file`, `run_command`.
 
-`Workspace` owns the filesystem boundary. `CodingAgent` owns the model/tool loop.
-`AgentConfig` owns model and API connection configuration.
+v0.3 does **not** compress context yet. It only establishes the state/context boundary that v0.4 will extend.
 
 ## Install
 
@@ -39,9 +54,7 @@ pip install -e ".[dev]"
 
 ## Model and API configuration
 
-v0.2 supports a custom API key, base URL, model, and maximum agent steps.
-
-Configuration precedence is:
+Configuration precedence:
 
 ```text
 CLI argument
@@ -80,7 +93,7 @@ coding-agent "Inspect this project and summarize its structure"
 The endpoint must support the Responses API and the function-calling behavior used by this agent.
 An API that only imitates Chat Completions is not sufficient.
 
-CLI overrides are also available:
+CLI overrides:
 
 ```bash
 coding-agent "Add a /health endpoint" \
@@ -93,14 +106,38 @@ coding-agent "Add a /health endpoint" \
 
 Prefer `OPENAI_API_KEY` over `--api-key`, because command-line arguments can be stored in shell history or exposed to process inspection.
 
-The built-in defaults are:
+Built-in defaults:
 
 ```text
 model: gpt-6-sol
 max_steps: 20
 ```
 
-The workspace directory must already exist.
+## Context model
+
+Every `CodingAgent.run(...)` creates a fresh `AgentState`.
+
+Conceptually:
+
+```text
+AgentState
+├── task
+├── history
+├── step
+└── metadata
+```
+
+The `ContextManager` is currently deliberately simple:
+
+```text
+create_state(task)
+build_input(state)
+record_model_output(state, output)
+record_tool_result(state, ...)
+advance_step(state)
+```
+
+In v0.4, context compression will be added behind this boundary instead of being embedded directly into the Agent Loop.
 
 ## Tests
 
@@ -109,7 +146,7 @@ pytest
 ```
 
 Unit tests do not call a real LLM API. The Agent Loop test uses a fake client.
-GitHub Actions runs `pytest -q` on pushes to `main` and on pull requests.
+GitHub Actions runs `pytest -q` on pushes to `main` and pull requests.
 
 ## Safety limits
 
@@ -121,7 +158,7 @@ This is **not a sandbox**.
 - Git is limited to `status`, `diff`, `log`, and `show`.
 - Commands time out and stdout/stderr are truncated.
 - Allow-listed interpreters such as Python can still execute arbitrary code with the current user's OS permissions.
-- API keys are not stored by `AgentConfig` outside process memory and are hidden from its `repr`.
+- API keys stay in process memory and are hidden from `AgentConfig.__repr__`.
 
 Use an isolated test workspace for untrusted tasks.
 
@@ -138,4 +175,4 @@ Use an isolated test workspace for untrusted tasks.
 
 ## Intentionally not implemented yet
 
-v0.2 does not yet include multi-agent orchestration, context compression, memory, RAG, vector databases, DAG execution, MCP, a web UI, Docker sandboxing, or automatic Git commit/push.
+v0.3 does not yet include context compression, multi-agent orchestration, RAG, vector databases, DAG execution, MCP, a web UI, Docker sandboxing, or automatic Git commit/push.
