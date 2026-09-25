@@ -7,6 +7,7 @@ from typing import Any
 from openai import OpenAI
 
 from .config import AgentConfig
+from .context import ContextManager
 from .tools import CodingTools
 from .workspace import Workspace
 
@@ -104,11 +105,13 @@ class CodingAgent:
         workspace: str | Path,
         config: AgentConfig | None = None,
         client: Any | None = None,
+        context_manager: ContextManager | None = None,
     ) -> None:
         self.config = config if config is not None else AgentConfig.from_sources()
         self.model = self.config.model
         self.max_steps = self.config.max_steps
         self.tools = CodingTools(Workspace(workspace))
+        self.context = context_manager if context_manager is not None else ContextManager()
         self.client = (
             client
             if client is not None
@@ -127,23 +130,22 @@ class CodingAgent:
             return {"ok": False, "error": f"Tool execution failed: {exc}"}
 
     def run(self, task: str) -> str:
-        if not task.strip():
-            raise ValueError("Task must not be empty.")
+        state = self.context.create_state(task)
 
-        input_items: list[Any] = [{"role": "user", "content": task}]
+        while state.step < self.max_steps:
+            self.context.advance_step(state)
 
-        for _ in range(self.max_steps):
             response = self.client.responses.create(
                 model=self.model,
                 instructions=SYSTEM_PROMPT,
-                input=input_items,
+                input=self.context.build_input(state),
                 tools=TOOL_DEFINITIONS,
                 parallel_tool_calls=False,
                 store=False,
             )
 
-            # Preserve all model output, including reasoning items and tool calls.
-            input_items.extend(response.output)
+            # Stateless Responses calls must replay model output on the next turn.
+            self.context.record_model_output(state, response.output)
 
             tool_calls = [
                 item
@@ -159,12 +161,10 @@ class CodingAgent:
 
             for call in tool_calls:
                 result = self._execute_tool_call(call)
-                input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call.call_id,
-                        "output": json.dumps(result, ensure_ascii=False),
-                    }
+                self.context.record_tool_result(
+                    state,
+                    call_id=call.call_id,
+                    result=result,
                 )
 
         raise RuntimeError(
