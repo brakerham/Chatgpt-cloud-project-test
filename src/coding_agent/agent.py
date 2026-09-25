@@ -6,11 +6,10 @@ from typing import Any
 
 from openai import OpenAI
 
+from .config import AgentConfig
 from .tools import CodingTools
 from .workspace import Workspace
 
-
-DEFAULT_MODEL = "gpt-6-sol"
 
 SYSTEM_PROMPT = """You are a minimal Coding Agent working inside one workspace.
 
@@ -103,17 +102,18 @@ class CodingAgent:
     def __init__(
         self,
         workspace: str | Path,
-        model: str = DEFAULT_MODEL,
-        max_steps: int = 20,
+        config: AgentConfig | None = None,
         client: Any | None = None,
     ) -> None:
-        if max_steps <= 0:
-            raise ValueError("max_steps must be greater than zero.")
-
-        self.model = model
-        self.max_steps = max_steps
+        self.config = config if config is not None else AgentConfig.from_sources()
+        self.model = self.config.model
+        self.max_steps = self.config.max_steps
         self.tools = CodingTools(Workspace(workspace))
-        self.client = client if client is not None else OpenAI()
+        self.client = (
+            client
+            if client is not None
+            else OpenAI(**self.config.openai_client_kwargs())
+        )
 
     def _execute_tool_call(self, call: Any) -> dict[str, Any]:
         try:
