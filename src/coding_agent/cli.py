@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
-from .agent import DEFAULT_MODEL, CodingAgent
+from .agent import CodingAgent
+from .config import AgentConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,16 +17,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project directory the agent may access. Default: current directory.",
     )
     parser.add_argument(
+        "--api-key",
+        default=None,
+        help=(
+            "API key override. Prefer OPENAI_API_KEY so the key is not stored "
+            "in shell history."
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="OpenAI-compatible API base URL override.",
+    )
+    parser.add_argument(
         "--model",
-        default=os.getenv("OPENAI_MODEL", DEFAULT_MODEL),
-        help=f"OpenAI model ID. Default: OPENAI_MODEL or {DEFAULT_MODEL}.",
+        default=None,
+        help="Model ID override.",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Maximum model/tool loop steps.",
     )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    agent = CodingAgent(workspace=args.workspace, model=args.model)
+    config = AgentConfig.from_sources(
+        api_key=args.api_key,
+        base_url=args.base_url,
+        model=args.model,
+        max_steps=args.max_steps,
+    )
+    agent = CodingAgent(workspace=args.workspace, config=config)
     print(agent.run(args.task))
 
 
