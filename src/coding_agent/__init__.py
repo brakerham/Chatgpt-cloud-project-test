@@ -1,3 +1,4 @@
 from .agent import CodingAgent
+from .config import AgentConfig
 
-__all__ = ["CodingAgent"]
+__all__ = ["AgentConfig", "CodingAgent"]
