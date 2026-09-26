@@ -1,8 +1,8 @@
 # Minimal Coding Agent
 
-A deliberately small Coding Agent for learning the core agent loop step by step.
+A deliberately small Coding Agent for learning the core agent runtime step by step.
 
-Current version: **v0.3**
+Current version: **v0.4**
 
 ## Architecture
 
@@ -14,6 +14,14 @@ CodingAgent
 AgentState
    ↕
 ContextManager
+   │
+   ├── normal history
+   │
+   └── when context grows too large
+   │         ↓
+   │   ContextCompressor
+   │         ↓
+   │   Summary + recent events
    ↓
 LLM
    ↓
@@ -23,29 +31,79 @@ CodingTools
    ↓
 Tool Result
    ↓
-ContextManager
-   ↓
-LLM
-   ↓
 ...
-   ↓
-Final Answer
 ```
 
-Responsibilities are intentionally separated:
+Responsibilities:
 
-- `AgentConfig`: model and API connection configuration.
-- `AgentState`: mutable state for one agent run: original task, history, current step, metadata.
-- `ContextManager`: creates state, rebuilds model input, and records model/tool outputs.
-- `CodingAgent`: decides when to call the model and tools; it no longer owns the raw history list.
+- `AgentConfig`: API/model/runtime configuration.
+- `AgentState`: task, active history, summary, recent compressed context, step count, metadata.
+- `ContextManager`: builds model input, records events, measures context size, triggers compaction.
+- `ContextCompressor`: uses the configured LLM to summarize older completed history.
+- `CodingAgent`: Agent Loop orchestration.
 - `Workspace`: filesystem boundary.
-- `CodingTools`: `list_files`, `read_file`, `write_file`, `run_command`.
+- `CodingTools`: file and command tools.
 
-v0.3 does **not** compress context yet. It only establishes the state/context boundary that v0.4 will extend.
+## Context compression
+
+v0.4 uses a deliberately simple compaction strategy.
+
+```text
+Original task              always preserved
+Older raw history          -> LLM structured summary
+Most recent events         -> preserved as text
+New events after compaction -> raw Responses history
+```
+
+When the active context exceeds the configured character budget:
+
+1. the original user task is kept unchanged;
+2. older model/tool history is serialized and summarized;
+3. a limited number of the newest events are preserved as text;
+4. old raw `function_call` / `function_call_output` protocol items are removed;
+5. the next model call continues from the compacted context.
+
+Removing completed tool protocol items as a unit avoids replaying a broken partial tool-call chain.
+
+The summary prompt preserves:
+
+- goal;
+- completed work;
+- files/artifacts;
+- tests/checks;
+- decisions and constraints;
+- errors and unresolved issues;
+- next likely action.
+
+This version uses a **character budget**, not exact tokenizer accounting, to avoid adding another dependency.
+
+Defaults:
+
+```text
+context_max_chars:   40000
+context_recent_items: 8
+```
+
+Configure with environment variables:
+
+```text
+CODING_AGENT_CONTEXT_MAX_CHARS
+CODING_AGENT_CONTEXT_RECENT_ITEMS
+```
+
+or CLI:
+
+```bash
+coding-agent "Implement the task" \
+  --context-max-chars 50000 \
+  --context-recent-items 6
+```
+
+A compression pass is an additional LLM call, so it consumes tokens/API usage.
 
 ## Install
 
-Python 3.10+ is required.
+Python 3.10+:
 
 ```bash
 python -m venv .venv
@@ -69,6 +127,8 @@ OPENAI_API_KEY
 OPENAI_BASE_URL
 OPENAI_MODEL
 CODING_AGENT_MAX_STEPS
+CODING_AGENT_CONTEXT_MAX_CHARS
+CODING_AGENT_CONTEXT_RECENT_ITEMS
 ```
 
 PowerShell example:
@@ -87,57 +147,12 @@ $env:OPENAI_API_KEY="your-key"
 $env:OPENAI_BASE_URL="https://example.com/v1"
 $env:OPENAI_MODEL="your-model"
 
-coding-agent "Inspect this project and summarize its structure"
+coding-agent "Inspect this project"
 ```
 
-The endpoint must support the Responses API and the function-calling behavior used by this agent.
-An API that only imitates Chat Completions is not sufficient.
+The endpoint must support the Responses API. Context compression also uses Responses API text generation.
 
-CLI overrides:
-
-```bash
-coding-agent "Add a /health endpoint" \
-  --workspace ./my-project \
-  --api-key your-key \
-  --base-url https://example.com/v1 \
-  --model your-model \
-  --max-steps 12
-```
-
-Prefer `OPENAI_API_KEY` over `--api-key`, because command-line arguments can be stored in shell history or exposed to process inspection.
-
-Built-in defaults:
-
-```text
-model: gpt-6-sol
-max_steps: 20
-```
-
-## Context model
-
-Every `CodingAgent.run(...)` creates a fresh `AgentState`.
-
-Conceptually:
-
-```text
-AgentState
-├── task
-├── history
-├── step
-└── metadata
-```
-
-The `ContextManager` is currently deliberately simple:
-
-```text
-create_state(task)
-build_input(state)
-record_model_output(state, output)
-record_tool_result(state, ...)
-advance_step(state)
-```
-
-In v0.4, context compression will be added behind this boundary instead of being embedded directly into the Agent Loop.
+Prefer environment variables over `--api-key` because command-line secrets may appear in shell history or process inspection.
 
 ## Tests
 
@@ -145,22 +160,21 @@ In v0.4, context compression will be added behind this boundary instead of being
 pytest
 ```
 
-Unit tests do not call a real LLM API. The Agent Loop test uses a fake client.
+Tests do not call a real LLM API. Fake clients/compressors verify the Agent Loop and compaction behavior.
 GitHub Actions runs `pytest -q` on pushes to `main` and pull requests.
 
 ## Safety limits
 
 This is **not a sandbox**.
 
-- File paths are confined to the configured workspace.
-- Absolute paths and `../` path escapes are rejected.
+- Workspace path checks protect direct file tools.
 - Commands run without a shell and executable names are allow-listed.
-- Git is limited to `status`, `diff`, `log`, and `show`.
-- Commands time out and stdout/stderr are truncated.
-- Allow-listed interpreters such as Python can still execute arbitrary code with the current user's OS permissions.
-- API keys stay in process memory and are hidden from `AgentConfig.__repr__`.
+- Git is restricted to read-only subcommands.
+- Commands have timeouts and truncated output.
+- Interpreters such as Python can still access the host OS with the current user's permissions.
+- API keys remain process-local and are hidden from `AgentConfig.__repr__`.
 
-Use an isolated test workspace for untrusted tasks.
+Use an isolated workspace for untrusted tasks.
 
 ## Roadmap
 
@@ -175,4 +189,4 @@ Use an isolated test workspace for untrusted tasks.
 
 ## Intentionally not implemented yet
 
-v0.3 does not yet include context compression, multi-agent orchestration, RAG, vector databases, DAG execution, MCP, a web UI, Docker sandboxing, or automatic Git commit/push.
+v0.4 does not yet include SubAgents, DAG execution, RAG, vector databases, MCP, a web UI, Docker sandboxing, or automatic Git commit/push.
