@@ -40,6 +40,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Maximum model/tool loop steps.",
     )
+    parser.add_argument(
+        "--context-max-chars",
+        type=int,
+        default=None,
+        help="Approximate context character budget before compression.",
+    )
+    parser.add_argument(
+        "--context-recent-items",
+        type=int,
+        default=None,
+        help="Maximum number of recent raw events preserved during compression.",
+    )
     return parser
 
 
@@ -50,6 +62,8 @@ def main() -> None:
         base_url=args.base_url,
         model=args.model,
         max_steps=args.max_steps,
+        context_max_chars=args.context_max_chars,
+        context_recent_items=args.context_recent_items,
     )
     agent = CodingAgent(workspace=args.workspace, config=config)
     print(agent.run(args.task))
